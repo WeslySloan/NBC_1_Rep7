@@ -1,13 +1,9 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
 #pragma once
-
 
 #include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
-#include "InputActionValue.h" // FInputActionValue
+#include "InputActionValue.h"
 #include "NBCPawn.generated.h"
-
 
 class UCapsuleComponent;
 class USkeletalMeshComponent;
@@ -16,122 +12,108 @@ class UCameraComponent;
 class UInputAction;
 class UInputMappingContext;
 
-
 UCLASS()
 class NBC_1_REP7_API ANBCPawn : public APawn
 {
-	GENERATED_BODY()
-
+    GENERATED_BODY()
 
 public:
-	ANBCPawn();
+    ANBCPawn();
 
-
-	virtual void Tick(float DeltaSeconds) override;
-	virtual void BeginPlay() override;
-	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
-
+    virtual void BeginPlay() override;
+    virtual void Tick(float DeltaSeconds) override;
+    virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 
 protected:
-	// Components
-	UPROPERTY(VisibleAnywhere, Category = "Components")
-	UCapsuleComponent* CapsuleComp;
+    // Components
+    UPROPERTY(VisibleAnywhere, Category = "Components")
+    UCapsuleComponent* CapsuleComp;
 
+    UPROPERTY(VisibleAnywhere, Category = "Components")
+    USkeletalMeshComponent* MeshComp;
 
-	UPROPERTY(VisibleAnywhere, Category = "Components")
-	USkeletalMeshComponent* MeshComp;
+    UPROPERTY(VisibleAnywhere, Category = "Components")
+    USpringArmComponent* SpringArm;
 
+    UPROPERTY(VisibleAnywhere, Category = "Components")
+    UCameraComponent* CameraComp;
 
-	UPROPERTY(VisibleAnywhere, Category = "Components")
-	USpringArmComponent* SpringArm;
+    // Movement speeds
+    UPROPERTY(EditAnywhere, Category = "Movement")
+    float MoveSpeedGround = 600.f;
 
+    UPROPERTY(EditAnywhere, Category = "Movement")
+    float MoveSpeedAir = 300.f;
 
-	UPROPERTY(VisibleAnywhere, Category = "Components")
-	UCameraComponent* CameraComp;
+    // runtime current move speed
+    float CurrentMoveSpeed = 600.f;
 
+    UPROPERTY(EditAnywhere, Category = "Movement")
+    float VerticalSpeed = 400.f;
 
-	// Movement parameters
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement")
-	float MoveSpeed;
+    // Look / rotation
+    UPROPERTY(EditAnywhere, Category = "Movement")
+    float RotationSpeed = 120.f; // degrees/sec for yaw & pitch
 
+    UPROPERTY(EditAnywhere, Category = "Camera")
+    float MinPitch = -80.f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement")
-	float RotationSpeed; // degrees/sec for yaw & pitch
+    UPROPERTY(EditAnywhere, Category = "Camera")
+    float MaxPitch = 80.f;
 
+    UPROPERTY(EditAnywhere, Category = "Camera")
+    bool bInvertY = false;
 
-	// Camera pitch clamp
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
-	float MinPitch;
+    // Tilt (visual roll)
+    UPROPERTY(EditAnywhere, Category = "Movement")
+    float TiltSpeed = 90.f; // degrees/sec for target change
 
+    UPROPERTY(EditAnywhere, Category = "Movement")
+    float MaxTiltAngle = 25.f; // visual tilt limit
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
-	float MaxPitch;
+    // gravity
+    UPROPERTY(EditAnywhere, Category = "Movement")
+    float Gravity = -980.f;
 
+    UPROPERTY(EditAnywhere, Category = "Movement")
+    float GroundProbeDistance = 6.f;
 
-	// Invert Y
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
-	bool bInvertY;
+    // Input assets (assign in BP)
+    UPROPERTY(EditAnywhere, Category = "Input")
+    UInputAction* IA_Move;
 
+    UPROPERTY(EditAnywhere, Category = "Input")
+    UInputAction* IA_Look;
 
-	// Tilt (Roll) settings
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement")
-	float TiltSpeed; // degrees/sec for roll
+    UPROPERTY(EditAnywhere, Category = "Input")
+    UInputAction* IA_Tilt; // Axis1D Q/E
 
+    UPROPERTY(EditAnywhere, Category = "Input")
+    UInputAction* IA_Ascend;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement")
-	float MaxTiltAngle; // clamp roll angle
+    UPROPERTY(EditAnywhere, Category = "Input")
+    UInputMappingContext* IMC_Default;
 
+    // Runtime inputs/state
+    FVector2D MoveInput;
+    FVector2D LookInput;
+    float TiltInput = 0.f;      // -1..1 from Q/E
+    float VerticalInput = 0.f;  // -1..1 from Shift/Space
 
-	// Vertical (ascend/descend)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement")
-	float VerticalSpeed;
+    float CameraPitch = -10.f;
+    float VerticalVelocity = 0.f;
+    bool bIsGrounded = false;
 
+    // visual roll interpolation
+    float SpringArmRollTarget = 0.f;
+    float SpringArmRollCurrent = 0.f;
 
-	// Enhanced Input assets (assign in BP or via code)
-	UPROPERTY(EditDefaultsOnly, Category = "Input")
-	UInputAction* IA_Move;
+    // Input handlers
+    void OnMove(const FInputActionValue& Value);
+    void OnLook(const FInputActionValue& Value);
+    void OnTilt(const FInputActionValue& Value);
+    void OnAscend(const FInputActionValue& Value);
 
-
-	UPROPERTY(EditDefaultsOnly, Category = "Input")
-	UInputAction* IA_Look;
-
-
-	UPROPERTY(EditDefaultsOnly, Category = "Input")
-	UInputAction* IA_Tilt;
-
-
-	UPROPERTY(EditDefaultsOnly, Category = "Input")
-	UInputAction* IA_Ascend;
-
-
-	UPROPERTY(EditDefaultsOnly, Category = "Input")
-	UInputMappingContext* IMC_Default;
-
-
-	FVector2D MoveInput; 
-	FVector2D LookInput; 
-	float TiltInput; 
-	float VerticalInput; 
-
-
-	float CameraPitch;
-	float CurrentRoll; 
-
-	// 
-
-	//float VerticalVelocity = 0.f;
-	//UPROPERTY(EditAnywhere, Category = "Movement")
-	//float Gravity = -980.f; // cm/s^2
-
-	//UPROPERTY(EditAnywhere, Category = "Movement")
-	//float GroundProbeDistance = 6.f; // 착지 판정 거리
-
-	//bool bIsGrounded = false;
-
-
-	// input handlers
-	void OnMove(const FInputActionValue& Value);
-	void OnLook(const FInputActionValue& Value);
-	void OnTilt(const FInputActionValue& Value);
-	void OnAscend(const FInputActionValue& Value);
+    // helpers
+    void UpdateGroundedState();
 };

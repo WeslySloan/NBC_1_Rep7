@@ -1,8 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
-
-
-#include "NBCPawn.h"
-
+﻿#include "NBCPawn.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/SpringArmComponent.h"
@@ -13,48 +9,66 @@
 #include "InputMappingContext.h"
 #include "GameFramework/PlayerController.h"
 #include "Engine/LocalPlayer.h"
+#include "DrawDebugHelpers.h"
 
 ANBCPawn::ANBCPawn()
 {
     PrimaryActorTick.bCanEverTick = true;
 
-    // Root collision
+    // Capsule root
     CapsuleComp = CreateDefaultSubobject<UCapsuleComponent>(TEXT("CapsuleComp"));
+    CapsuleComp->InitCapsuleSize(34.f, 88.f);
     RootComponent = CapsuleComp;
+
+    // Collision defaults (capsule handles collisions)
     CapsuleComp->SetSimulatePhysics(false);
+    CapsuleComp->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+    CapsuleComp->SetCollisionObjectType(ECC_Pawn);
+    CapsuleComp->SetCollisionResponseToAllChannels(ECR_Ignore);
+    CapsuleComp->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Block);
+    CapsuleComp->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Block);
+    CapsuleComp->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
 
     // Mesh
     MeshComp = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("MeshComp"));
     MeshComp->SetupAttachment(RootComponent);
     MeshComp->SetSimulatePhysics(false);
+    MeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
-    // Spring arm + camera
+    // SpringArm & Camera
     SpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("SpringArm"));
     SpringArm->SetupAttachment(RootComponent);
     SpringArm->TargetArmLength = 300.f;
-    SpringArm->bUsePawnControlRotation = false; // we'll control pitch manually
+
+    // We'll manually control springarm pitch & roll (so disable using pawn control rotation)
+    SpringArm->bUsePawnControlRotation = false;
+    SpringArm->bInheritPitch = false;
+    SpringArm->bInheritYaw = false;
+    SpringArm->bInheritRoll = false;
 
     CameraComp = CreateDefaultSubobject<UCameraComponent>(TEXT("CameraComp"));
     CameraComp->SetupAttachment(SpringArm);
 
     // Defaults
-    MoveSpeed = 600.f;
-    RotationSpeed = 120.f; // degrees per second
+    MoveSpeedGround = 600.f;
+    MoveSpeedAir = 300.f;
+    CurrentMoveSpeed = MoveSpeedGround;
+    VerticalSpeed = 400.f;
+    RotationSpeed = 120.f;
     MinPitch = -80.f;
     MaxPitch = 80.f;
     bInvertY = false;
     CameraPitch = -10.f;
 
-    TiltSpeed = 90.f; // degrees/sec
-    MaxTiltAngle = 45.f; // clamp roll
+    TiltSpeed = 90.f;
+    MaxTiltAngle = 25.f;
 
-    VerticalSpeed = 400.f;
+    VerticalVelocity = 0.f;
+    bIsGrounded = false;
 
-    CurrentRoll = 0.f;
-    TiltInput = 0.f;
-    VerticalInput = 0.f;
+    SpringArmRollTarget = 0.f;
+    SpringArmRollCurrent = 0.f;
 
-    // For quick testing in editor: auto possess player 0 (optional)
     AutoPossessPlayer = EAutoReceiveInput::Player0;
 }
 
@@ -62,7 +76,7 @@ void ANBCPawn::BeginPlay()
 {
     Super::BeginPlay();
 
-    // Add Mapping Context to local player subsystem if available
+    // Register IMC to EnhancedInput subsystem
     if (APlayerController* PC = Cast<APlayerController>(GetController()))
     {
         if (ULocalPlayer* LP = PC->GetLocalPlayer())
@@ -77,8 +91,8 @@ void ANBCPawn::BeginPlay()
         }
     }
 
-    // Initialize springarm pitch
-    SpringArm->SetRelativeRotation(FRotator(CameraPitch, 0.f, 0.f));
+    // Initialize springarm rotation with initial pitch & roll
+    SpringArm->SetRelativeRotation(FRotator(CameraPitch, 0.f, SpringArmRollCurrent));
 }
 
 void ANBCPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -87,7 +101,6 @@ void ANBCPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 
     if (UEnhancedInputComponent* EIC = Cast<UEnhancedInputComponent>(PlayerInputComponent))
     {
-        // Bind actions (these UInputAction* are assigned in editor or via code)
         if (IA_Move)
         {
             EIC->BindAction(IA_Move, ETriggerEvent::Triggered, this, &ANBCPawn::OnMove);
@@ -118,229 +131,169 @@ void ANBCPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
     }
 }
 
+void ANBCPawn::UpdateGroundedState()
+{
+    bIsGrounded = false;
+    if (GetWorld() && CapsuleComp)
+    {
+        FVector ActorLoc = GetActorLocation();
+        float CapsuleHalf = CapsuleComp->GetScaledCapsuleHalfHeight();
+        FVector TraceStart = ActorLoc;
+        FVector TraceEnd = ActorLoc - FVector(0.f, 0.f, CapsuleHalf + GroundProbeDistance + 1.f);
+
+        FHitResult Hit;
+        FCollisionQueryParams Params;
+        Params.AddIgnoredActor(this);
+
+        if (GetWorld()->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, ECC_Visibility, Params))
+        {
+            bIsGrounded = true;
+        }
+    }
+}
+
 void ANBCPawn::OnMove(const FInputActionValue& Value)
 {
+    // Axis2D: X=Right, Y=Forward (set in IMC)
     MoveInput = Value.Get<FVector2D>();
+
+    float Delta = GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.f;
+
+    // Choose speed depending on grounded state
+    CurrentMoveSpeed = bIsGrounded ? MoveSpeedGround : MoveSpeedAir;
+
+    if (!MoveInput.IsNearlyZero() && Delta > 0.f)
+    {
+        // Local: X=Forward, Y=Right (we map Val.Y->forward, Val.X->right)
+        FVector LocalOffset = FVector(MoveInput.Y * CurrentMoveSpeed * Delta, MoveInput.X * CurrentMoveSpeed * Delta, 0.f);
+        AddActorLocalOffset(LocalOffset, true); // sweep=true
+    }
 }
 
 void ANBCPawn::OnLook(const FInputActionValue& Value)
 {
     LookInput = Value.Get<FVector2D>();
+
+    float Delta = GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.f;
+    float YawDelta = LookInput.X * RotationSpeed * Delta;
+    float PitchDelta = (bInvertY ? 1.f : -1.f) * LookInput.Y * RotationSpeed * Delta;
+
+    // Update Controller rotation so camera view follows mouse
+    if (APlayerController* PC = Cast<APlayerController>(GetController()))
+    {
+        FRotator ControlRot = PC->GetControlRotation();
+        ControlRot.Yaw += YawDelta;
+        ControlRot.Pitch = FMath::Clamp(ControlRot.Pitch + PitchDelta, MinPitch, MaxPitch);
+        PC->SetControlRotation(ControlRot);
+
+        // Keep Pawn yaw aligned with control yaw (so movement forward matches view)
+        FRotator ActorRot = GetActorRotation();
+        ActorRot.Yaw = ControlRot.Yaw;
+        SetActorRotation(FRotator(ActorRot.Pitch, ActorRot.Yaw, ActorRot.Roll));
+
+        // store camera pitch for springarm/mesh visual sync
+        CameraPitch = ControlRot.Pitch;
+    }
+    else
+    {
+        // fallback
+        if (YawDelta != 0.f)
+        {
+            AddActorLocalRotation(FRotator(0.f, YawDelta, 0.f));
+        }
+        CameraPitch = FMath::Clamp(CameraPitch + PitchDelta, MinPitch, MaxPitch);
+    }
+
+    // Apply camera pitch and current springarm roll to springarm
+    SpringArm->SetRelativeRotation(FRotator(CameraPitch, 0.f, SpringArmRollCurrent));
+
+    // Sync mesh pitch visually as well
+    if (MeshComp)
+    {
+        FRotator MeshRel = MeshComp->GetRelativeRotation();
+        MeshRel.Pitch = CameraPitch; // adjust scale if needed (e.g. *0.6f)
+        MeshComp->SetRelativeRotation(MeshRel);
+    }
 }
 
 void ANBCPawn::OnTilt(const FInputActionValue& Value)
 {
+    // Axis1D: Q=-1, E=+1
     TiltInput = Value.Get<float>();
+
+    // Determine target roll for springarm (visual). For natural feel, we invert sign:
+    // when TiltInput is positive (E), tilt right; negative (Q) tilt left.
+    SpringArmRollTarget = FMath::Clamp(-TiltInput * MaxTiltAngle, -MaxTiltAngle, MaxTiltAngle);
+
+    // We do NOT rotate the Actor itself — only visual tilt on springarm and mesh.
+    // Mesh will be set in Tick() to inverse/adjust to springarm roll for nicer look.
 }
 
 void ANBCPawn::OnAscend(const FInputActionValue& Value)
 {
     VerticalInput = Value.Get<float>();
+
+    // If user is actively ascending/descending, immediately apply local vertical offset
+    float Delta = GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.f;
+    if (FMath::Abs(VerticalInput) > KINDA_SMALL_NUMBER && Delta > 0.f)
+    {
+        FVector LocalUp = FVector(0.f, 0.f, VerticalInput * VerticalSpeed * Delta);
+        AddActorLocalOffset(LocalUp, true);
+        VerticalVelocity = 0.f; // override gravity while input active
+    }
 }
 
 void ANBCPawn::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
 
-    // --- Movement (로컬 좌표계 기준) ---
-    if (!MoveInput.IsNearlyZero())
+    // 1) Update grounded state first (used by movement speed)
+    UpdateGroundedState();
+
+    // 2) Gravity (only when not actively ascending/descending)
+    if (FMath::Abs(VerticalInput) <= KINDA_SMALL_NUMBER)
     {
-        FVector LocalOffset = FVector(MoveInput.Y * MoveSpeed * DeltaSeconds, MoveInput.X * MoveSpeed * DeltaSeconds, 0.f);
-        AddActorLocalOffset(LocalOffset, true);
+        if (!bIsGrounded)
+        {
+            VerticalVelocity += Gravity * DeltaSeconds;
+        }
+        else if (VerticalVelocity < 0.f)
+        {
+            VerticalVelocity = 0.f;
+        }
     }
 
-    // Vertical (상승/하강)
-    if (FMath::Abs(VerticalInput) > KINDA_SMALL_NUMBER)
+    // Apply vertical velocity via local offset (sweep)
+    if (!FMath::IsNearlyZero(VerticalVelocity))
     {
-        FVector VerticalOffset = FVector(0.f, 0.f, VerticalInput * VerticalSpeed * DeltaSeconds);
-        AddActorLocalOffset(VerticalOffset, true);
+        FVector LocalVertical = FVector(0.f, 0.f, VerticalVelocity * DeltaSeconds);
+        AddActorLocalOffset(LocalVertical, true);
     }
 
-    // --- Rotation (Yaw on Pawn, Pitch on spring arm) ---
-    if (FMath::Abs(LookInput.X) > KINDA_SMALL_NUMBER)
-    {
-        float YawDelta = LookInput.X * RotationSpeed * DeltaSeconds;
-        AddActorLocalRotation(FRotator(0.f, YawDelta, 0.f)); // local yaw
-    }
+    // 3) Visual tilt smoothing: interpolate current roll towards target
+    SpringArmRollCurrent = FMath::FInterpTo(SpringArmRollCurrent, SpringArmRollTarget, DeltaSeconds, 6.f); // interp speed 6
 
-    if (FMath::Abs(LookInput.Y) > KINDA_SMALL_NUMBER)
-    {
-        float PitchDelta = (bInvertY ? 1.f : -1.f) * LookInput.Y * RotationSpeed * DeltaSeconds;
-        CameraPitch = FMath::Clamp(CameraPitch + PitchDelta, MinPitch, MaxPitch);
-        SpringArm->SetRelativeRotation(FRotator(CameraPitch, 0.f, 0.f));
-    }
+    // Apply to springarm (pitch from CameraPitch, roll from SpringArmRollCurrent)
+    SpringArm->SetRelativeRotation(FRotator(CameraPitch, 0.f, SpringArmRollCurrent));
 
-    // --- Tilt (Roll) applied to Pawn and Mesh ---
-    if (FMath::Abs(TiltInput) > KINDA_SMALL_NUMBER)
-    {
-        float RollDelta = TiltInput * TiltSpeed * DeltaSeconds;
-        CurrentRoll = FMath::Clamp(CurrentRoll + RollDelta, -MaxTiltAngle, MaxTiltAngle);
-    }
-    else
-    {
-        CurrentRoll = FMath::FInterpTo(CurrentRoll, 0.f, DeltaSeconds, 4.f);
-    }
-
-    // 4) Actor 회전을 안전하게 sweep로 적용 (충돌 대상과 겹치지 않도록)
-    FRotator ActorRot = GetActorRotation();
-    // 보존해야할 Yaw
-    float NewYaw = ActorRot.Yaw;
-    float NewPitch = 0.f; // 우리는 Actor 전체의 Pitch는 바꾸지 않을 수 있음 (원하면 여기 변경)
-    // Set full desired rotation including roll
-    FRotator DesiredRotation = FRotator(0.f, NewYaw, CurrentRoll);
-
-    // Sweep rotation via root component to avoid penetration
-    if (UCapsuleComponent* RootCol = CapsuleComp)
-    {
-        FHitResult Hit;
-        RootCol->MoveComponent(FVector::ZeroVector, DesiredRotation.Quaternion(), true, &Hit);
-        // MoveComponent로 sweep 하므로 충돌 시 적절히 막힘
-    }
-
-    // 5) Mesh 시각 보정: Mesh는 카메라의 Pitch와 Actor Roll을 함께 받음
+    // Mesh: apply pitch and a counter or scaled roll for nicer visuals (here we give inverse roll)
     if (MeshComp)
     {
-        // Mesh는 보통 Actor Roll의 반대값을 줘서 과도한 시각 왜곡을 줄여줌.
-        // 여기서는 CameraPitch도 같이 적용하여 '앞뒤로 기울어짐' 구현
-        FRotator MeshRelRot = FRotator(CameraPitch, 0.f, -CurrentRoll);
-        MeshComp->SetRelativeRotation(MeshRelRot);
+        FRotator MeshRel = MeshComp->GetRelativeRotation();
+        MeshRel.Pitch = CameraPitch;
+        MeshRel.Roll = -SpringArmRollCurrent * 1.0f; // negative so mesh leans into turn visually
+        MeshComp->SetRelativeRotation(MeshRel);
     }
+
+    // Debug draw ground probe (optional)
+#if WITH_EDITOR
+    if (GetWorld() && CapsuleComp)
+    {
+        FVector ActorLoc = GetActorLocation();
+        float CapsuleHalf = CapsuleComp->GetScaledCapsuleHalfHeight();
+        FVector TraceStart = ActorLoc;
+        FVector TraceEnd = ActorLoc - FVector(0.f, 0.f, CapsuleHalf + GroundProbeDistance + 1.f);
+        DrawDebugLine(GetWorld(), TraceStart, TraceEnd, bIsGrounded ? FColor::Green : FColor::Red, false, 0.02f);
+    }
+#endif
 }
-
-
-//#include "NBCPawn.h"
-//
-//
-//#include "Components/CapsuleComponent.h"
-//#include "Components/SkeletalMeshComponent.h"
-//#include "GameFramework/SpringArmComponent.h"
-//#include "Camera/CameraComponent.h"
-//#include "EnhancedInputComponent.h"
-//#include "EnhancedInputSubsystems.h"
-//#include "InputAction.h"
-//#include "InputMappingContext.h"
-//#include "GameFramework/PlayerController.h"
-//#include "Engine/LocalPlayer.h"
-//
-//// Sets default values
-//ANBCPawn::ANBCPawn()
-//{
-//	PrimaryActorTick.bCanEverTick = true;
-//
-//	CapsuleComp = CreateDefaultSubobject<UCapsuleComponent>(TEXT("CapsuleComp"));
-//	RootComponent = CapsuleComp;
-//	CapsuleComp->SetSimulatePhysics(false);
-//
-//	// Mesh
-//	MeshComp = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("MeshComp"));
-//	MeshComp->SetupAttachment(RootComponent);
-//	MeshComp->SetSimulatePhysics(false);
-//
-//	// Spring arm + camera
-//	SpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("SpringArm"));
-//	SpringArm->SetupAttachment(RootComponent);
-//	SpringArm->TargetArmLength = 300.f;
-//	SpringArm->bUsePawnControlRotation = false; // we'll control pitch manually
-//
-//	CameraComp = CreateDefaultSubobject<UCameraComponent>(TEXT("CameraComp"));
-//	CameraComp->SetupAttachment(SpringArm);
-//
-//	// Defaults
-//	MoveSpeed = 600.f;
-//	RotationSpeed = 120.f; // degrees per second
-//	MinPitch = -80.f;
-//	MaxPitch = 80.f;
-//	bInvertY = false;
-//	CameraPitch = -10.f;
-//
-//	// 자동 player 인식기능 // GameMode로 대체
-//	/*AutoPossessPlayer = EAutoReceiveInput::Player0;*/
-//}
-//
-//// Called when the game starts or when spawned
-//void ANBCPawn::BeginPlay()
-//{
-//	Super::BeginPlay();
-//
-//
-//	// Add Mapping Context to local player subsystem if available
-//	if (APlayerController* PC = Cast<APlayerController>(GetController()))
-//	{
-//		if (ULocalPlayer* LP = PC->GetLocalPlayer())
-//		{
-//			if (UEnhancedInputLocalPlayerSubsystem* Subsys = LP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
-//			{
-//				if (IMC_Default)
-//				{
-//					Subsys->AddMappingContext(IMC_Default, 0);
-//				}
-//			}
-//		}
-//	}
-//
-//	SpringArm->SetRelativeRotation(FRotator(CameraPitch, 0.f, 0.f));
-//}
-//
-//void ANBCPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
-//{
-//	Super::SetupPlayerInputComponent(PlayerInputComponent);
-//
-//	if (UEnhancedInputComponent* EIC = Cast<UEnhancedInputComponent>(PlayerInputComponent))
-//	{
-//		if (IA_Move)
-//		{
-//			EIC->BindAction(IA_Move, ETriggerEvent::Triggered, this, &ANBCPawn::OnMove);
-//			EIC->BindAction(IA_Move, ETriggerEvent::Completed, this, &ANBCPawn::OnMove);
-//			EIC->BindAction(IA_Move, ETriggerEvent::Canceled, this, &ANBCPawn::OnMove);
-//		}
-//
-//		if (IA_Look)
-//		{
-//			EIC->BindAction(IA_Look, ETriggerEvent::Triggered, this, &ANBCPawn::OnLook);
-//			EIC->BindAction(IA_Look, ETriggerEvent::Completed, this, &ANBCPawn::OnLook);
-//			EIC->BindAction(IA_Look, ETriggerEvent::Canceled, this, &ANBCPawn::OnLook);
-//		}
-//	}
-//}
-//void ANBCPawn::OnMove(const FInputActionValue& Value)
-//{
-//	// Expecting Axis2D: X=Right(-1..1), Y=Forward(-1..1)
-//	MoveInput = Value.Get<FVector2D>();
-//}
-//
-//
-//void ANBCPawn::OnLook(const FInputActionValue& Value)
-//{
-//	LookInput = Value.Get<FVector2D>();
-//}
-//
-//
-//void ANBCPawn::Tick(float DeltaSeconds)
-//{
-//	Super::Tick(DeltaSeconds);
-//
-//
-//	// --- Movement (로컬 좌표계 기준) ---
-//	if (!MoveInput.IsNearlyZero())
-//	{
-//		FVector LocalOffset = FVector(MoveInput.Y * MoveSpeed * DeltaSeconds, MoveInput.X * MoveSpeed * DeltaSeconds, 0.f);
-//		AddActorLocalOffset(LocalOffset, true);
-//	}
-//
-//
-//	// --- Rotation  ---
-//	if (FMath::Abs(LookInput.X) > KINDA_SMALL_NUMBER)
-//	{
-//		float YawDelta = LookInput.X * RotationSpeed * DeltaSeconds;
-//		AddActorLocalRotation(FRotator(0.f, YawDelta, 0.f)); // local yaw
-//	}
-//
-//
-//	if (FMath::Abs(LookInput.Y) > KINDA_SMALL_NUMBER)
-//	{
-//		float PitchDelta = (bInvertY ? 1.f : -1.f) * LookInput.Y * RotationSpeed * DeltaSeconds;
-//		CameraPitch = FMath::Clamp(CameraPitch + PitchDelta, MinPitch, MaxPitch);
-//		SpringArm->SetRelativeRotation(FRotator(CameraPitch, 0.f, 0.f));
-//	}
-//}
-
