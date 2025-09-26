@@ -73,6 +73,20 @@ protected:
 	bool bInvertY;
 
 
+	// Tilt (Roll) settings
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement")
+	float TiltSpeed; // degrees/sec for roll
+
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement")
+	float MaxTiltAngle; // clamp roll angle
+
+
+	// Vertical (ascend/descend)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement")
+	float VerticalSpeed;
+
+
 	// Enhanced Input assets (assign in BP or via code)
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	UInputAction* IA_Move;
@@ -83,18 +97,41 @@ protected:
 
 
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
+	UInputAction* IA_Tilt;
+
+
+	UPROPERTY(EditDefaultsOnly, Category = "Input")
+	UInputAction* IA_Ascend;
+
+
+	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	UInputMappingContext* IMC_Default;
 
 
-	// Runtime inputs (stored each frame by callbacks)
-	FVector2D MoveInput; // X=Right, Y=Forward (depends on how you set mapping)
-	FVector2D LookInput; // X=MouseX (yaw), Y=MouseY (pitch)
+	FVector2D MoveInput; 
+	FVector2D LookInput; 
+	float TiltInput; 
+	float VerticalInput; 
 
 
 	float CameraPitch;
+	float CurrentRoll; 
+
+	// 
+
+	//float VerticalVelocity = 0.f;
+	//UPROPERTY(EditAnywhere, Category = "Movement")
+	//float Gravity = -980.f; // cm/s^2
+
+	//UPROPERTY(EditAnywhere, Category = "Movement")
+	//float GroundProbeDistance = 6.f; // 착지 판정 거리
+
+	//bool bIsGrounded = false;
 
 
 	// input handlers
 	void OnMove(const FInputActionValue& Value);
 	void OnLook(const FInputActionValue& Value);
+	void OnTilt(const FInputActionValue& Value);
+	void OnAscend(const FInputActionValue& Value);
 };
