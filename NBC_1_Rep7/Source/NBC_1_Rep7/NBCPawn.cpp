@@ -257,6 +257,19 @@ void ANBCPawn::Tick(float DeltaSeconds)
 
     SpringArmRollCurrent = FMath::FInterpTo(SpringArmRollCurrent, SpringArmRollTarget, DeltaSeconds, TiltSpeed * 0.1f);
 
+    if (APlayerController* PC = Cast<APlayerController>(GetController()))
+    {
+        FRotator CR = PC->GetControlRotation();
+        SetActorRotation(FRotator(0.f, CR.Yaw, 0.f));
+    }
+
+    FRotator NewActorRot = GetActorRotation();
+    NewActorRot.Yaw = GetControlRotation().Yaw;  
+    NewActorRot.Roll = SpringArmRollCurrent; 
+    SetActorRotation(NewActorRot);
+
+    //SpringArm->SetRelativeRotation(FRotator(CameraPitch, 0.f, 0.f));
+
     SpringArm->SetRelativeRotation(FRotator(CameraPitch, 0.f, SpringArmRollCurrent));
 
     if (MeshComp)
