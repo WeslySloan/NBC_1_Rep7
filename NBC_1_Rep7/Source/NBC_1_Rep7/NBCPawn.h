@@ -45,7 +45,6 @@ protected:
     UPROPERTY(EditAnywhere, Category = "Movement")
     float MoveSpeedAir = 300.f;
 
-    // runtime current move speed
     float CurrentMoveSpeed = 600.f;
 
     UPROPERTY(EditAnywhere, Category = "Movement")
@@ -66,7 +65,7 @@ protected:
 
     // Tilt (visual roll)
     UPROPERTY(EditAnywhere, Category = "Movement")
-    float TiltSpeed = 90.f; // degrees/sec for target change
+    float TiltSpeed = 90.f; // interp speed for visual roll
 
     UPROPERTY(EditAnywhere, Category = "Movement")
     float MaxTiltAngle = 25.f; // visual tilt limit
@@ -104,7 +103,6 @@ protected:
     float VerticalVelocity = 0.f;
     bool bIsGrounded = false;
 
-    // visual roll interpolation
     float SpringArmRollTarget = 0.f;
     float SpringArmRollCurrent = 0.f;
 
